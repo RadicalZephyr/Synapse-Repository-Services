@@ -1,5 +1,11 @@
 package org.sagebionetworks.usagemetrics;
 
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStreamReader;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -16,6 +22,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 import org.sagebionetworks.client.Synapse;
 import org.sagebionetworks.client.exceptions.SynapseException;
+import org.sagebionetworks.repo.model.UserProfile;
 
 
 /**
@@ -28,11 +35,44 @@ import org.sagebionetworks.client.exceptions.SynapseException;
  */
 public class ProjectActivityStats {
 	
-	private static final int TIME_WINDOW_DAYS = 30;
+	private static final String ID_TO_USERNAME_FILE = "/home/geoff/Downloads/principalIdToUserNameMap.csv";
+	private static Map<String, String> idToUser;
+	
+	private static final int TIME_WINDOW_DAYS = 400;
 	
 	private static final boolean VERBOSE = false;
 	
+	public static void initIdToEmailMap() {
+		// Load the csv file and process it into the map.
+		File file = new File(ID_TO_USERNAME_FILE);
+		FileInputStream is;
+		try {
+			is = new FileInputStream(file);
+		} catch (FileNotFoundException e) {
+			throw new RuntimeException(e);
+		}
+		BufferedReader br = new BufferedReader(new InputStreamReader(is));
+		try {
+			idToUser = new HashMap<String, String>(600);
+			String s = br.readLine();
+			while (s != null) {
+				String[] values = s.split(",");
+				try {
+					if (Integer.parseInt(values[2]) == 1) {
+						idToUser.put(values[0], values[3]);
+					}
+				} catch (NumberFormatException e) {
+				}
+				s = br.readLine();
+			}
+		} catch (IOException e) {
+			throw new RuntimeException(e);
+		}
+		
+	}
+	
 	public static void main(String[] args) throws Exception {
+		initIdToEmailMap();
 //		String startDateString = null;
 //		String endDateString = null;
 		Long start = (new Date()).getTime()-TIME_WINDOW_DAYS*24*3600*1000L;
@@ -156,11 +196,11 @@ public class ProjectActivityStats {
 		int batchSize = 20;
 		int total = 0;
 		do {
-			String query = "select id, createdOn, modifiedOn, createdBy, modifiedBy from "+
+			String query = "select id, createdOn, modifiedOn, createdByPrincipalId, modifiedByPrincipalId from "+
 					objectType+" where parentId==\""+bucketId+"\"";
 			// if start is specified, then limit results to those whose modified date is >= start
 			if (start!=null) query += " and modifiedOn >= "+start;
-			// if end is specified thenlimit results to those whose creation date is <= end
+			// if end is specified then limit results to those whose creation date is <= end
 			if (end!=null) query += "and createdOn <= "+end;
 			query += " LIMIT "+batchSize+" OFFSET "+offset;
 			JSONObject dataIds = synapse.query(query);
@@ -223,12 +263,14 @@ public class ProjectActivityStats {
 			long created = o.getLong(type+".createdOn");
 			long modified = o.getLong(type+".modifiedOn");
 			if ((start==null || start<=created) && (end==null || created<=end)) {
-				String name = o.getString(type+".createdBy");
-				if (!UsageMetricsUtils.isOmittedName(name)) ans.add(name);
+				String id = o.getString(type+".createdByPrincipalId");
+				String email = idToUser.get(id);
+				if (email != null && !UsageMetricsUtils.isOmittedName(email)) ans.add(email);
 			}
 			if ((start==null || start<=modified) && (end==null || modified<=end)) {
-				String name = o.getString(type+".modifiedBy");
-				if (!UsageMetricsUtils.isOmittedName(name)) ans.add(name);
+				String id = o.getString(type+".modifiedByPrincipalId");
+				String email = idToUser.get(id);
+				if (email != null && !UsageMetricsUtils.isOmittedName(email)) ans.add(email);
 			}
 		} catch (JSONException e) {
 			throw new RuntimeException(o.toString(), e);
