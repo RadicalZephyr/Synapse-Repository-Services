@@ -7,9 +7,13 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
+import java.util.TreeMap;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -20,98 +24,126 @@ import org.sagebionetworks.client.exceptions.SynapseException;
 public class DataAuditStats {
 	private static class DataObject {
 
-		public DataObject(String entityId, String name, String etag, String createdBy,
-				String modifiedBy) {
+		public DataObject(String entityId, String name, String etag) {
 			this.entityId = entityId;
 			this.name = name;
 			this.etag = etag;
-			this.createdBy = createdBy;
-			this.modifiedBy = modifiedBy;
 		}
-		
+
 		public String entityId;
 		public String name;
 		public String etag;
-		public String createdBy;
-		public String modifiedBy;
-		
+
 	}
-	
+
 	private static final String ID_TO_USERNAME_FILE = "/home/geoff/Downloads/principalIdToUserNameMap.csv";
 	private static Map<String, String> idToUser;
 	private static final int TIME_WINDOW_DAYS = 30;
-	
+
 	private static final boolean VERBOSE = false;
-	
+
 	/**
 	 * @param args
-	 * @throws Exception 
+	 * @throws Exception
 	 */
 	public static void main(String[] args) throws Exception {
-		Long start = (new Date()).getTime()-TIME_WINDOW_DAYS*24*3600*1000L;
-		Long end = null;
-
 		Synapse synapse = new Synapse();
 		String username = args[0];
 		String password = args[1];
 		synapse.login(username, password);
 
 		initIdToEmailMap();
-		
-		ArrayList<DataObject> entities = getEntities(synapse);
-		System.out.format("There a total of %d data entities possibly not created by Sage Employees%n%n", entities.size());
-		
-		for (DataObject obj : entities) {
-			System.out.format("%s created by %s%n", obj.name, obj.createdBy);
+
+		ArrayList<String> externalUserIds = getExternalUserIds();
+
+		Map<String, ArrayList<DataObject>> entitiesByUser = getEntities(synapse, externalUserIds);
+
+		System.out.format("There a total of %d non-Sage employees who have uploaded data.%n%n", entitiesByUser.size());
+
+		for (Entry<String, ArrayList<DataObject>> entries : entitiesByUser
+				.entrySet()) {
+			System.out.format("%n%s - created %d entities%n",
+					idToUser.get(entries.getKey()), entries.getValue().size());
+
+			for (DataObject obj : entries.getValue()) {
+				System.out.format("\t%s%n", obj.name);
+			}
 		}
+	}
+
+	public static ArrayList<String> getExternalUserIds() {
+		ArrayList<String> userIds = new ArrayList<String>();
+
+		for (Entry<String, String> entry : idToUser.entrySet()) {
+			if (! (isSageEmployee(entry.getValue()) ||
+				   isSpecialCaseSageEmployee(entry.getValue()))) {
+				userIds.add(entry.getKey());
+			}
+		}
+
+		return userIds;
+
 	}
 
 	// Rewrite this method to be much smarter.  Several things: approach from the other direction.
-	// filter the list of users for non-sage employees, then run per-user queries limiting data 
+	// filter the list of users for non-sage employees, then run per-user queries limiting data
 	// where createdBy = userId.  Second.  This step is potentially parallelizable, make that object a runnable
 	// and then dispatch three or four threads with lists of users to process.
-	public static ArrayList<DataObject> getEntities(Synapse synapse) throws SynapseException, JSONException {
-		String baseQuery = "select id, name, eTag, createdByPrincipalId, modifiedByPrincipalId from data limit %d offset %d";
-		
-		JSONObject dataTotal = synapse.query("select id from data limit 1");
+	public static Map<String, ArrayList<DataObject>> getEntities(Synapse synapse, ArrayList<String> externalUserIds) throws SynapseException, JSONException, InterruptedException {
+		String baseQuery = "select id, name, eTag " +
+							"from data where createdByPrincipalId == \"%s\" limit %d offset %d";
 
-		int offset = 1;
-		int batchSize = 20;
-		int total = (int)dataTotal.getLong("totalNumberOfResults");
-		
-		ArrayList<DataObject> dataList = new ArrayList<DataObject>();
-		
-		while (offset < total) {
-			JSONObject dataBatch = synapse.query(String.format(baseQuery, batchSize, offset));
+		Map<String, ArrayList<DataObject>> userDataMap = new TreeMap<String, ArrayList<DataObject>>();
 
-			JSONArray d = dataBatch.getJSONArray("results");
-			for (int j=0; j<d.length(); j++) {
-				JSONObject data = d.getJSONObject(j);
-				
-				DataObject obj = new DataObject(data.getString("data.id"), 
-												 data.getString("data.name"),
-												 data.getString("data.eTag"),
-												 idToUser.get(data.getString("data.createdByPrincipalId")),
-												 idToUser.get(data.getString("data.modifiedByPrincipalId")));
+		for (String userId : externalUserIds) {
+			int total;
+			int offset = 1;
+			int batchSize = 40;
 
-				if (j==0  && VERBOSE) System.out.format("\t\t%s - data  %d of %d", obj.name, offset, total);
-				if (isCreatedBySageEmployee(obj))
+			ArrayList<DataObject> dataList = new ArrayList<DataObject>();
+
+			do {
+				JSONObject dataBatch = synapse.query(String.format(baseQuery, userId, batchSize, offset));
+				total = (int)dataBatch.getLong("totalNumberOfResults");
+				JSONArray d = dataBatch.getJSONArray("results");
+				for (int j=0; j<d.length(); j++) {
+					JSONObject data = d.getJSONObject(j);
+
+					DataObject obj = new DataObject(data.getString("data.id"),
+							data.getString("data.name"),
+							data.getString("data.eTag"));
+
 					dataList.add(obj);
-			}
+				}
 
-			offset += batchSize;
+				offset += batchSize;
+				
+			} while (offset < total);
+			
+			Thread.sleep(500);
+			userDataMap.put(userId, dataList);
 		}
-		
-		return dataList;
+
+		return userDataMap;
 	}
-	
-	private static boolean isCreatedBySageEmployee(DataObject obj) {
-		if (obj.createdBy == null)
+
+	private static boolean isSpecialCaseSageEmployee(String email) {
+		List<String> names = Arrays.asList(new String[] {"isjang", "nicole.deflaux", "matthew.furia"});
+
+		if (names.contains(email.split("@")[0])) {
+			return true;
+		}
+
+		return false;
+	}
+
+	private static boolean isSageEmployee(String email) {
+		if (email == null)
 			return false;
-		
-		String[] split = obj.createdBy.split("@");
-		
-		if (split.length != 2 || split[1].equalsIgnoreCase("sagebase.org")) {
+
+		String[] split = email.split("@");
+
+		if (split.length != 2 || !split[1].equalsIgnoreCase("sagebase.org")) {
 			return false;
 		}
 		return true;
@@ -143,7 +175,7 @@ public class DataAuditStats {
 		} catch (IOException e) {
 			throw new RuntimeException(e);
 		}
-		
+
 	}
 
 }
