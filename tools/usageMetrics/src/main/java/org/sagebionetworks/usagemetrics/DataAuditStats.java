@@ -60,13 +60,20 @@ public class DataAuditStats {
 
 		System.out.format("There a total of %d non-Sage employees who have uploaded data.%n%n", entitiesByUser.size());
 
+		printMap(entitiesByUser);
+	}
+
+	private static void printMap(
+			Map<String, ArrayList<DataObject>> entitiesByUser) {
 		for (Entry<String, ArrayList<DataObject>> entries : entitiesByUser
 				.entrySet()) {
-			System.out.format("%n%s - created %d entities%n",
-					idToUser.get(entries.getKey()), entries.getValue().size());
+			if (entries.getValue().size() != 0) {
+				System.out.format("%n%s - created %d entities%n", idToUser
+						.get(entries.getKey()), entries.getValue().size());
 
-			for (DataObject obj : entries.getValue()) {
-				System.out.format("\t%s%n", obj.name);
+				for (DataObject obj : entries.getValue()) {
+					System.out.format("\t%s%n", obj.name);
+				}
 			}
 		}
 	}
@@ -93,7 +100,7 @@ public class DataAuditStats {
 		String baseQuery = "select id, name, eTag " +
 							"from data where createdByPrincipalId == \"%s\" limit %d offset %d";
 
-		Map<String, ArrayList<DataObject>> userDataMap = new TreeMap<String, ArrayList<DataObject>>();
+		Map<String, ArrayList<DataObject>> userDataMap = new HashMap<String, ArrayList<DataObject>>(externalUserIds.size());
 
 		for (String userId : externalUserIds) {
 			int total;
@@ -117,10 +124,10 @@ public class DataAuditStats {
 				}
 
 				offset += batchSize;
-				
+				if (offset == 401)
+					Thread.sleep(500);
 			} while (offset < total);
 			
-			Thread.sleep(500);
 			userDataMap.put(userId, dataList);
 		}
 
