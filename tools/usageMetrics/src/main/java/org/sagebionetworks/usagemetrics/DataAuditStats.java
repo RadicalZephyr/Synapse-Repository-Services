@@ -8,39 +8,35 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.TreeMap;
 
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.sagebionetworks.client.Synapse;
 import org.sagebionetworks.client.exceptions.SynapseException;
+import org.sagebionetworks.repo.model.EntityPath;
 
 public class DataAuditStats {
 	private static class DataObject {
 
-		public DataObject(String entityId, String name, String etag) {
+		public DataObject(String entityId, String name) {
 			this.entityId = entityId;
 			this.name = name;
-			this.etag = etag;
 		}
 
 		public String entityId;
 		public String name;
-		public String etag;
+		public String uri;
 
 	}
 
 	private static final String ID_TO_USERNAME_FILE = "/home/geoff/Downloads/principalIdToUserNameMap.csv";
 	private static Map<String, String> idToUser;
-	private static final int TIME_WINDOW_DAYS = 30;
 
-	private static final boolean VERBOSE = false;
 
 	/**
 	 * @param args
@@ -58,21 +54,74 @@ public class DataAuditStats {
 
 		Map<String, ArrayList<DataObject>> entitiesByUser = getEntities(synapse, externalUserIds);
 
+		Map<String, Map<String, ArrayList<DataObject>>> rootProjects = getRootProjects(synapse, entitiesByUser);
+		
 		System.out.format("There a total of %d non-Sage employees who have uploaded data.%n%n", entitiesByUser.size());
-
-		printMap(entitiesByUser);
+		
+		printProjectsByUser(rootProjects);
+		System.out.println();
+		System.out.println("------------------------------------------------------------------");
+		System.out.println();
+		printUserProjectsPlusData(rootProjects);
 	}
 
-	private static void printMap(
-			Map<String, ArrayList<DataObject>> entitiesByUser) {
-		for (Entry<String, ArrayList<DataObject>> entries : entitiesByUser
-				.entrySet()) {
-			if (entries.getValue().size() != 0) {
-				System.out.format("%n%s - created %d entities%n", idToUser
-						.get(entries.getKey()), entries.getValue().size());
+	private static void printProjectsByUser(
+			Map<String, Map<String, ArrayList<DataObject>>> rootProjects) {
+		for (String user : rootProjects.keySet()) {
+			System.out.format("Projects owned by %s:%n", idToUser.get(user));
+			for (String projectId : rootProjects.get(user).keySet()) {
+				System.out.format("\t%s%n", projectId);
+			}
+			System.out.println();
+		}
+	}
 
-				for (DataObject obj : entries.getValue()) {
-					System.out.format("\t%s%n", obj.name);
+	private static Map<String, Map<String, ArrayList<DataObject>>> getRootProjects(Synapse synapse,
+			Map<String, ArrayList<DataObject>> entitiesByUser) {
+		
+		Map<String, Map<String, ArrayList<DataObject>>> userToProjects = new HashMap<String,Map<String, ArrayList<DataObject>>>();
+		
+		for (String user : entitiesByUser.keySet()) {
+			for (DataObject obj : entitiesByUser.get(user)) {
+				EntityPath entityPath;
+				try {
+					entityPath = synapse.getEntityPath(obj.entityId);
+				} catch (SynapseException e) {
+					System.out.format("Could not find entity %s%n", obj.entityId);
+					e.printStackTrace();
+					continue;
+				}
+				Map<String, ArrayList<DataObject>> map = userToProjects.get(user);
+				if (map == null) {
+					map = new HashMap<String, ArrayList<DataObject>>();
+					userToProjects.put(user, map);
+				}
+				
+				String rootProjectId = entityPath.getPath().get(1).getId();
+				
+				ArrayList<DataObject> arrayList = map.get(rootProjectId);
+				if (arrayList == null) {
+					arrayList = new ArrayList<DataObject>();
+					map.put(rootProjectId, arrayList);
+				}
+				arrayList.add(obj);
+			}
+		}
+		
+		return userToProjects;
+	}
+
+	private static <obj> void printUserProjectsPlusData(
+			Map<String, Map<String, ArrayList<DataObject>>> rootProjects) {
+		for (String user : rootProjects.keySet()) {
+			System.out.format("%s projects%n", idToUser.get(user));
+			for (Entry<String, ArrayList<DataObject>> entries : rootProjects
+					.get(user).entrySet()) {
+				if (entries.getValue().size() != 0) {
+					System.out.format("\tProject Id - %s:%n", entries.getKey());
+					for (DataObject obj : entries.getValue()) {
+						System.out.format("\t\t%s - %s%n", obj.entityId, obj.name);
+					}
 				}
 			}
 		}
@@ -97,7 +146,7 @@ public class DataAuditStats {
 	// where createdBy = userId.  Second.  This step is potentially parallelizable, make that object a runnable
 	// and then dispatch three or four threads with lists of users to process.
 	public static Map<String, ArrayList<DataObject>> getEntities(Synapse synapse, ArrayList<String> externalUserIds) throws SynapseException, JSONException, InterruptedException {
-		String baseQuery = "select id, name, eTag " +
+		String baseQuery = "select id, name " +
 							"from data where createdByPrincipalId == \"%s\" limit %d offset %d";
 
 		Map<String, ArrayList<DataObject>> userDataMap = new HashMap<String, ArrayList<DataObject>>(externalUserIds.size());
@@ -117,8 +166,7 @@ public class DataAuditStats {
 					JSONObject data = d.getJSONObject(j);
 
 					DataObject obj = new DataObject(data.getString("data.id"),
-							data.getString("data.name"),
-							data.getString("data.eTag"));
+							data.getString("data.name"));
 
 					dataList.add(obj);
 				}
@@ -135,7 +183,12 @@ public class DataAuditStats {
 	}
 
 	private static boolean isSpecialCaseSageEmployee(String email) {
-		List<String> names = Arrays.asList(new String[] {"isjang", "nicole.deflaux", "matthew.furia"});
+		List<String> names = Arrays.asList(new String[] {"isjang", "nicole.deflaux", "matthew.furia",
+															"david.gerrard", "creighto", "th8623",
+															"ninpy.weiyi", "cwarden", "jpeng", "sean.cory",
+															"yifeic", "zzsw311", "kimhaseong", "vlagani", 
+															"r.s.savage", "yingwooi", "frank.dondelinger",
+															"aviad"});
 
 		if (names.contains(email.split("@")[0])) {
 			return true;
