@@ -38,7 +38,7 @@ public class ProjectActivityStats {
 	private static final String ID_TO_USERNAME_FILE = "/home/geoff/Downloads/principalIdToUserNameMap.csv";
 	private static Map<String, String> idToUser;
 	
-	private static final int TIME_WINDOW_DAYS = 400;
+	private static final int TIME_WINDOW_DAYS = 30;
 	
 	private static final boolean VERBOSE = false;
 	
@@ -73,16 +73,16 @@ public class ProjectActivityStats {
 	
 	public static void main(String[] args) throws Exception {
 		initIdToEmailMap();
-//		String startDateString = null;
-//		String endDateString = null;
-		Long start = (new Date()).getTime()-TIME_WINDOW_DAYS*24*3600*1000L;
-		Long end = null;
+		
+		DateFormat df = new SimpleDateFormat("dd-MMM-yyyy");
+		Date end = df.parse("27-JUL-2012");
+		Long start = (end.getTime())-TIME_WINDOW_DAYS*24*3600*1000L;
 		Synapse synapse = new Synapse();
 		String username = args[0];
 		String password = args[1];
 		synapse.login(username, password);
-		Map<String, Collection<String>> results = findProjectUsers(synapse,  start,  end);
-		DateFormat df = new SimpleDateFormat("dd-MMM-yyyy");
+		Map<String, Collection<String>> results = findProjectUsers(synapse,  start,  end.getTime());
+		
 		System.out.println("\nStart date: "+(start==null?"NONE":df.format(start))+" End date: "+(end==null?"NONE":df.format(end)));
 		System.out.println("Note:  Not all contributors are listed below.  When we reach the maximum 'score' for a project we stop scanning it for contributors.");
 		int totalScore = 0;
@@ -182,6 +182,7 @@ public class ProjectActivityStats {
 	 * @param bucketId
 	 * @param objectType
 	 * @param results
+	 * @throws InterruptedException 
 	 */
 	public static void analyzeBucket(String projectKey,
 			String bucketId, 
@@ -203,7 +204,9 @@ public class ProjectActivityStats {
 			// if end is specified then limit results to those whose creation date is <= end
 			if (end!=null) query += "and createdOn <= "+end;
 			query += " LIMIT "+batchSize+" OFFSET "+offset;
-			JSONObject dataIds = synapse.query(query);
+			JSONObject dataIds;
+			
+			dataIds = reliablyQuerySynapse(synapse, query);
 			total = (int)dataIds.getLong("totalNumberOfResults");
 			JSONArray d = dataIds.getJSONArray("results");
 			for (int j=0; j<d.length(); j++) {
@@ -215,6 +218,24 @@ public class ProjectActivityStats {
 			offset += batchSize;
 		} while (offset<=total && offset<=MAX_CONTENT_PER_BUCKET);
 		
+	}
+
+	private static JSONObject reliablyQuerySynapse(Synapse synapse, String query) {
+		JSONObject dataIds = null;
+		boolean succeeded = false;
+		do {
+			try {
+				dataIds = synapse.query(query);
+				succeeded = true;
+			} catch (Exception e) {
+				try {
+					Thread.sleep(10000);
+				} catch (InterruptedException e1) {
+					e1.printStackTrace();
+				}
+			}
+		} while (!succeeded);
+		return dataIds;
 	}
 	
 	/**
