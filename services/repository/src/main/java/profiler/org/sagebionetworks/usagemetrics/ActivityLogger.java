@@ -97,10 +97,13 @@ public class ActivityLogger {
 		Object arg = null;
 		String argName = null;
 
+		boolean headerFound = false;
+
 		for (; argItr.hasNext() && argNameItr.hasNext(); arg = argItr.next(), argName = argNameItr.next()) {
 			if (arg instanceof HttpServletRequest) {
 				args.remove(argItr);
 				addHeaders(properties, (HttpServletRequest) arg);
+				headerFound = true;
 			} else {
 				String argString = arg != null ? arg.toString()
 						: "null";
@@ -110,6 +113,8 @@ public class ActivityLogger {
 				properties.put(argNameString, argString);
 			}
 		}
+
+		if (!headerFound) throw new IllegalArgumentException();
 
 		String argString = SynapseLoggingUtils.makeArgString(properties);
 
