@@ -3,9 +3,12 @@ package profiler.org.sagebionetworks.usagemetrics;
 import static org.mockito.Matchers.anyObject;
 import static org.mockito.Mockito.verify;
 
+import javax.servlet.http.HttpServletRequest;
+
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.Mockito;
 import org.sagebionetworks.repo.web.controller.ActivityLoggerTestHelper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.ContextConfiguration;
@@ -29,7 +32,8 @@ public class ActivityLoggerAutowiredTest {
 	 */
 	@Test
 	public void testConfig() throws Throwable {
-		testClass.testAnnotationsMethod("uniqueEntityId", "uniqueUserId");
+		HttpServletRequest mockRequest = Mockito.mock(HttpServletRequest.class);
+		testClass.testAnnotationsMethod("uniqueEntityId", "uniqueUserId", mockRequest);
 
 		verify(activityLoggerSpy).doBasicLogging((ProceedingJoinPoint) anyObject());
 	}
