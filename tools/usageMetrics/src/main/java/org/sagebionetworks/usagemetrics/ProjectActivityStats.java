@@ -35,7 +35,7 @@ import org.sagebionetworks.repo.model.UserProfile;
  */
 public class ProjectActivityStats {
 	
-	private static final String ID_TO_USERNAME_FILE = "/home/geoff/Downloads/principalIdToUserNameMap.csv";
+	private static final String ID_TO_USERNAME_FILE = "/home/geoff/work/sage/notes/principalIdToUserNameMap.csv";
 	private static Map<String, String> idToUser;
 	
 	private static final int TIME_WINDOW_DAYS = 30;
